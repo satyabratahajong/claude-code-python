@@ -1,19 +1,39 @@
 import argparse
+import json
 import os
 import sys
+
 from openai import OpenAI
+
+
 API_KEY = os.getenv("OPENROUTER_API_KEY")
-BASE_URL = os.getenv("OPENROUTER_BASE_URL", default="https://openrouter.ai/api/v1")
+BASE_URL = os.getenv(
+    "OPENROUTER_BASE_URL",
+    "https://openrouter.ai/api/v1",
+)
+
+
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("-p", required=True)
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-p", required=True)
+    args = parser.parse_args()
+
     if not API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
-    client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+
+    client = OpenAI(
+        api_key=API_KEY,
+        base_url=BASE_URL,
+    )
+
     chat = client.chat.completions.create(
         model="anthropic/claude-haiku-4.5",
-        messages=[{"role": "user", "content": args.p}],
+        messages=[
+            {
+                "role": "user",
+                "content": args.p,
+            }
+        ],
         tools=[
             {
                 "type": "function",
@@ -34,8 +54,31 @@ def main():
             }
         ],
     )
-    if not chat.choices or len(chat.choices) == 0:
+
+    if not chat.choices:
         raise RuntimeError("no choices in response")
-    print(chat.choices[0].message.content)
+
+    message = chat.choices[0].message
+    tool_calls = message.tool_calls
+
+    if tool_calls:
+        tool_call = tool_calls[0]
+        function_name = tool_call.function.name
+        arguments = json.loads(tool_call.function.arguments)
+
+        if function_name != "Read":
+            raise RuntimeError(f"Unknown tool: {function_name}")
+
+        file_path = arguments["file_path"]
+
+        with open(file_path, "rb") as file:
+            sys.stdout.buffer.write(file.read())
+
+        return
+
+    if message.content is not None:
+        print(message.content)
+
+
 if __name__ == "__main__":
     main()
