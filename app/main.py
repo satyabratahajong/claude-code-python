@@ -12,6 +12,7 @@ BASE_URL = os.getenv(
     "https://openrouter.ai/api/v1",
 )
 
+
 TOOLS = [
     {
         "type": "function",
@@ -29,7 +30,28 @@ TOOLS = [
                 "required": ["file_path"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Write",
+            "description": "Write content to a file",
+            "parameters": {
+                "type": "object",
+                "required": ["file_path", "content"],
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The path of the file to write to",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -37,14 +59,49 @@ def execute_tool(tool_call):
     function_name = tool_call.function.name
     arguments = json.loads(tool_call.function.arguments)
 
-    if function_name != "Read":
-        raise RuntimeError(f"Unknown tool: {function_name}")
+    if function_name == "Read":
+        file_path = arguments["file_path"]
 
-    file_path = arguments["file_path"]
+        with open(file_path, "rb") as file:
+            return file.read().decode("utf-8")
 
-    # Read as bytes and decode so newline characters are preserved.
-    with open(file_path, "rb") as file:
-        return file.read().decode("utf-8")
+    if function_name == "Write":
+        file_path = arguments["file_path"]
+        content = arguments["content"]
+
+        parent_directory = os.path.dirname(file_path)
+        if parent_directory:
+            os.makedirs(parent_directory, exist_ok=True)
+
+        # newline="" prevents Python from changing newline characters.
+        with open(file_path, "w", encoding="utf-8", newline="") as file:
+            file.write(content)
+
+        return f"Successfully wrote content to {file_path}"
+
+    raise RuntimeError(f"Unknown tool: {function_name}")
+
+
+def assistant_message_to_dict(message):
+    result = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": tool_call.id,
+                "type": tool_call.type,
+                "function": {
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments,
+                },
+            }
+            for tool_call in (message.tool_calls or [])
+        ],
+    }
+
+    if message.content is not None:
+        result["content"] = message.content
+
+    return result
 
 
 def main():
@@ -80,24 +137,7 @@ def main():
         assistant_message = chat.choices[0].message
         tool_calls = assistant_message.tool_calls or []
 
-        # Preserve the assistant message, including its tool_calls.
-        messages.append(
-            {
-                "role": "assistant",
-                "content": assistant_message.content,
-                "tool_calls": [
-                    {
-                        "id": tool_call.id,
-                        "type": tool_call.type,
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                    for tool_call in tool_calls
-                ],
-            }
-        )
+        messages.append(assistant_message_to_dict(assistant_message))
 
         if not tool_calls:
             if assistant_message.content is not None:
