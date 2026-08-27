@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 
 from openai import OpenAI
@@ -52,6 +53,23 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "Bash",
+            "description": "Execute a shell command",
+            "parameters": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to execute",
+                    }
+                },
+            },
+        },
+    },
 ]
 
 
@@ -73,11 +91,35 @@ def execute_tool(tool_call):
         if parent_directory:
             os.makedirs(parent_directory, exist_ok=True)
 
-        # newline="" prevents Python from changing newline characters.
         with open(file_path, "w", encoding="utf-8", newline="") as file:
             file.write(content)
 
         return f"Successfully wrote content to {file_path}"
+
+    if function_name == "Bash":
+        command = arguments["command"]
+
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=os.getcwd(),
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            return (
+                f"Command failed with exit code {result.returncode}\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}"
+            )
+
+        output = result.stdout + result.stderr
+
+        if output:
+            return output
+
+        return "Command completed successfully."
 
     raise RuntimeError(f"Unknown tool: {function_name}")
 
@@ -145,13 +187,13 @@ def main():
             return
 
         for tool_call in tool_calls:
-            result = execute_tool(tool_call)
+            tool_result = execute_tool(tool_call)
 
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": result,
+                    "content": tool_result,
                 }
             )
 
